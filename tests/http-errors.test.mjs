@@ -60,6 +60,28 @@ test("authentication and throttling retain their status semantics", () => {
   assert.equal(throttled.retryAfter, "0")
 })
 
+test("billing-period exhaustion with overage disabled is a non-retryable credit error", () => {
+  const clientData = {
+    type: "rate_limited",
+    code: "ai_credit_usage_limit",
+    limitedBy: "billing_period",
+    limitedBucketId: "flex",
+    aiCreditOverageBlockReason: "overage_disabled",
+  }
+  const payload = { isNotionError: true, name: "TooManyRequestsError", clientData, message: sensitive }
+  const exhausted = httpFailure("createAgentThread", 429, payload, "0")
+  assert.equal(exhausted.status, 402)
+  assert.equal(exhausted.code, "credits_exhausted")
+  assert.equal(exhausted.retryable, false)
+  assert.equal(exhausted.retryAfter, undefined)
+  assert.match(exhausted.message, /精选.*notion\/auto/)
+  assert.doesNotMatch(exhausted.message, /DO-NOT-LEAK/)
+  const standard = httpFailure("createAgentThread", 429, { ...payload, clientData: { ...clientData, limitedBucketId: "auto" } })
+  assert.match(standard.message, /标准/)
+  assert.doesNotMatch(standard.message, /notion\/auto/)
+  assert.equal(httpFailure("createAgentThread", 429, { ...payload, clientData: { ...clientData, limitedBy: "rolling" } }).status, 429)
+})
+
 test("failure bodies parse valid JSON and safely discard malformed or absent bodies", async () => {
   assert.deepEqual(await readFailurePayload(Response.json({ code: "subscription_required" })), { code: "subscription_required" })
   for (const body of [null, "", "<html>" + sensitive + "</html>", '{"code":']) {

@@ -50,6 +50,16 @@ export async function readFailurePayload(response, signal) {
 
 export function httpFailure(endpoint, status, payload, retryAfter) {
   const where = ENDPOINTS.has(endpoint) ? endpoint : "upstream endpoint"
+  const admission = payload?.clientData
+  if (status === 429 && payload?.isNotionError === true && payload.name === "TooManyRequestsError" &&
+      admission?.type === "rate_limited" && admission.code === "ai_credit_usage_limit" &&
+      admission.limitedBy === "billing_period" && admission.aiCreditOverageBlockReason === "overage_disabled") {
+    const bucket = admission.limitedBucketId === "flex" ? "精选" : admission.limitedBucketId === "auto" ? "标准" : "当前"
+    const alternative = admission.limitedBucketId === "flex" ? " 可改用 notion/auto 使用标准额度。" : ""
+    return new ProviderError(402, "credits_exhausted",
+      `Notion AI 本计费周期的${bucket}额度已用完，且未启用超额用量。${alternative}`,
+      { retryable: false })
+  }
   const prefix = `Notion AI rejected ${where} (HTTP ${status}).`
   const values = [payload?.code, payload?.errorCode, payload?.error?.code, payload?.error]
   const reasons = values.filter((value) => typeof value === "string" && REASONS.has(value)).map((value) => REASONS.get(value))
